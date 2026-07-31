@@ -1,0 +1,42 @@
+{
+  "name": "@damirmanyapov/routeros-lsp",
+  "version": "0.1.0",
+  "description": "Offline language server for MikroTik RouterOS .rsc files",
+  "type": "module",
+  "bin": {
+    "routeros-lsp": "dist/server.js"
+  },
+  "files": [
+    "dist/**",
+    "schema/schema.json"
+  ],
+  "keywords": [
+    "routeros",
+    "mikrotik",
+    "language-server",
+    "lsp",
+    "rsc"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/DamirManyapov/routeros-lsp.git"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "test": "node --test dist/*.test.js",
+    "schema": "python3 schema/build-schema.py && python3 schema/compact.py"
+  },
+  "dependencies": {
+    "vscode-languageserver": "^9.0.1",
+    "vscode-languageserver-textdocument": "^1.0.12"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}
