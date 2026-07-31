@@ -15,6 +15,11 @@ import { dirname, join } from "node:path";
 
 import { Schema, type Node } from "./schema.js";
 import {
+  findDuplicateProperties,
+  findUndeclaredVariables,
+  type Finding,
+} from "./analyze.js";
+import {
   contextAt,
   joinContinuations,
   sectionAt,
@@ -232,12 +237,36 @@ function diagnose(doc: TextDocument): Diagnostic[] {
           .slice(0, i)
           .join("/")}`,
         source: "routeros",
+        code: "unknown-path",
       });
       return;
     }
   });
 
+  for (const finding of [
+    ...findDuplicateProperties(lines),
+    ...findUndeclaredVariables(lines),
+  ]) {
+    out.push(toDiagnostic(finding));
+  }
+
   return out;
+}
+
+function toDiagnostic(finding: Finding): Diagnostic {
+  return {
+    severity:
+      finding.severity === "error"
+        ? DiagnosticSeverity.Error
+        : DiagnosticSeverity.Warning,
+    range: {
+      start: { line: finding.line, character: finding.column },
+      end: { line: finding.line, character: finding.column + finding.length },
+    },
+    message: finding.message,
+    source: "routeros",
+    code: finding.code,
+  };
 }
 
 documents.onDidChangeContent((change) => {

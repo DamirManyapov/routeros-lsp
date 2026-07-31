@@ -1,6 +1,6 @@
 {
   "name": "@damirmanyapov/routeros-lsp",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Offline language server for MikroTik RouterOS .rsc files",
   "type": "module",
   "bin": {
