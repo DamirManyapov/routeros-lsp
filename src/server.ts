@@ -19,6 +19,7 @@ import {
   findUndeclaredVariables,
   type Finding,
 } from "./analyze.js";
+import { Types, checkValue } from "./types.js";
 import {
   contextAt,
   joinContinuations,
@@ -30,6 +31,7 @@ import {
 
 const here = dirname(fileURLToPath(import.meta.url));
 const schema = new Schema(join(here, "..", "schema", "schema.json"));
+const types = new Types(join(here, "..", "schema", "types.json"));
 
 const connection = createConnection(ProposedFeatures.all);
 const documents = new TextDocuments(TextDocument);
@@ -246,11 +248,87 @@ function diagnose(doc: TextDocument): Diagnostic[] {
   for (const finding of [
     ...findDuplicateProperties(lines),
     ...findUndeclaredVariables(lines),
+    ...findBadValues(lines),
   ]) {
     out.push(toDiagnostic(finding));
   }
 
   return out;
+}
+
+/** Reports values that contradict the type harvested for their parameter. */
+function findBadValues(lines: string[]): Finding[] {
+  const out: Finding[] = [];
+  let insideString = false;
+
+  lines.forEach((raw, index) => {
+    const wasInside = insideString;
+    insideString = insideString !== hasOddQuotes(raw);
+    if (wasInside) return;
+
+    const trimmed = raw.trim();
+    if (!trimmed || trimmed.startsWith("#")) return;
+    // A continuation carries the tail of the command above it.
+    if (/\\\s*$/.test(lines[index - 1] ?? "")) return;
+
+    const text = joinContinuations(lines, index);
+    const tokens = tokenize(text.trim());
+    const head = tokens[0] ?? "";
+
+    let path: string[];
+    let command: string;
+    if (head.startsWith("/")) {
+      path = splitPath(head);
+      command = tokens.slice(1).find((t) => COMMAND_VERBS.has(t)) ?? "";
+      // "/ip/firewall/filter/add" puts the verb in the path itself.
+      if (!command && path.length > 1 && COMMAND_VERBS.has(path[path.length - 1]!)) {
+        command = path.pop()!;
+      }
+    } else {
+      path = sectionAt(lines, index - 1);
+      command = tokens.find((t) => COMMAND_VERBS.has(t)) ?? "";
+    }
+    if (!command || path.length === 0) return;
+
+    for (const token of tokens) {
+      const eq = token.indexOf("=");
+      if (eq <= 0) continue;
+
+      const key = token.slice(0, eq);
+      const value = token.slice(eq + 1);
+      if (key.startsWith(".") || key.includes(".") || key.startsWith("!")) continue;
+
+      const type = types.get(path, command, key);
+      if (!type) continue;
+
+      const message = checkValue(type, value);
+      if (!message) continue;
+
+      // Report against the written line, which may be a continuation.
+      const column = raw.indexOf(`${key}=`);
+      if (column < 0) continue;
+
+      out.push({
+        line: index,
+        column: column + key.length + 1,
+        length: value.length,
+        message,
+        severity: "warning",
+        code: "invalid-value",
+      });
+    }
+  });
+
+  return out;
+}
+
+function hasOddQuotes(text: string): boolean {
+  let count = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === "\\") { i++; continue; }
+    if (text[i] === '"') count++;
+  }
+  return count % 2 === 1;
 }
 
 function toDiagnostic(finding: Finding): Diagnostic {
