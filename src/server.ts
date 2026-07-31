@@ -147,9 +147,16 @@ connection.onHover((params) => {
 
   const section = sectionAt(lines, params.position.line);
 
-  // A path segment under the cursor.
+  // A path segment under the cursor. A space-joined header spreads one path
+  // over several tokens, so the whole line up to the first property is taken.
   if (line.trimStart().startsWith("/")) {
-    const segments = splitPath(line.trim().split(/\s+/)[0] ?? "");
+    const tokens = tokenize(line.trim());
+    const head: string[] = [];
+    for (const token of tokens) {
+      if (token.includes("=") || COMMAND_VERBS.has(token)) break;
+      head.push(token);
+    }
+    const segments = splitPath(head.join(" "));
     const index = segments.indexOf(word);
     if (index >= 0) {
       const node = schema.resolve(segments.slice(0, index + 1));
