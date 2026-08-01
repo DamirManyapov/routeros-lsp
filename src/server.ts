@@ -275,6 +275,10 @@ function diagnose(doc: TextDocument): Diagnostic[] {
 function findBadValues(lines: string[]): Finding[] {
   const out: Finding[] = [];
   let insideString = false;
+  // Carried down the file rather than rediscovered per line: scanning back to
+  // the header for every line is quadratic, and a 15k-line export makes that
+  // over a second on every keystroke.
+  let section: string[] = [];
 
   lines.forEach((raw, index) => {
     const wasInside = insideString;
@@ -299,8 +303,13 @@ function findBadValues(lines: string[]): Finding[] {
       if (!command && path.length > 1 && COMMAND_VERBS.has(path[path.length - 1]!)) {
         command = path.pop()!;
       }
+      // A bare header sets the section for the lines that follow.
+      if (!command && !tokens.some((t) => t.includes("="))) {
+        section = path;
+        return;
+      }
     } else {
-      path = sectionAt(lines, index - 1);
+      path = section;
       command = tokens.find((t) => COMMAND_VERBS.has(t)) ?? "";
     }
     if (!command || path.length === 0) return;
@@ -449,11 +458,36 @@ function typeForDiagnostic(lines: string[], diagnostic: Diagnostic) {
   return types.get(path, command, property);
 }
 
+/**
+ * Diagnostics run over the whole document, so they are debounced: while
+ * someone is typing, the intermediate states are not worth analysing, and
+ * doing so competes with completion for the same thread.
+ */
+const DEBOUNCE_MS = 250;
+const scheduled = new Map<string, NodeJS.Timeout>();
+
 documents.onDidChangeContent((change) => {
-  connection.sendDiagnostics({
-    uri: change.document.uri,
-    diagnostics: diagnose(change.document),
-  });
+  const uri = change.document.uri;
+  const existing = scheduled.get(uri);
+  if (existing) clearTimeout(existing);
+
+  scheduled.set(
+    uri,
+    setTimeout(() => {
+      scheduled.delete(uri);
+      const document = documents.get(uri);
+      if (!document) return;
+      connection.sendDiagnostics({ uri, diagnostics: diagnose(document) });
+    }, DEBOUNCE_MS),
+  );
+});
+
+documents.onDidClose((event) => {
+  const pendingRun = scheduled.get(event.document.uri);
+  if (pendingRun) clearTimeout(pendingRun);
+  scheduled.delete(event.document.uri);
+  // Clear anything left on screen for a file no longer open.
+  connection.sendDiagnostics({ uri: event.document.uri, diagnostics: [] });
 });
 
 function wordAt(line: string, character: number): string | null {
