@@ -2,3 +2,5 @@ node_modules/
 dist/
 schema/cache/
 *.log
+schema/cache/
+schema/routeros-schema.json

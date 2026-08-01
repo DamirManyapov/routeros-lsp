@@ -30,7 +30,9 @@ from concurrent.futures import ThreadPoolExecutor
 RAW = "https://raw.githubusercontent.com/tikoci/restraml/main/docs/{}/inspect.json"
 API = "https://api.github.com/repos/tikoci/restraml/contents/docs"
 
-CACHE = "cache"
+# Paths are relative to the repository root, since that is where npm scripts
+# and CI both run from.
+CACHE = "schema/cache"
 
 
 def version_key(v):
@@ -126,11 +128,11 @@ def main():
     compact(tree, len(kept))
 
     out = {"versions": kept, "tree": tree}
-    with open("routeros-schema.json", "w") as f:
+    with open("schema/routeros-schema.json", "w") as f:
         json.dump(out, f, separators=(",", ":"), sort_keys=True)
 
-    size = os.path.getsize("routeros-schema.json")
-    print(f"wrote routeros-schema.json  {size/1024/1024:.2f} MB", file=sys.stderr)
+    size = os.path.getsize("schema/routeros-schema.json")
+    print(f"wrote schema/routeros-schema.json  {size/1024/1024:.2f} MB", file=sys.stderr)
 
 
 if __name__ == "__main__":

@@ -44,14 +44,14 @@ def convert(node, total, out):
 
 
 def main():
-    src = json.load(open("routeros-schema.json"))
+    src = json.load(open("schema/routeros-schema.json"))
     total = len(src["versions"])
     tree = {}
     convert(src["tree"], total, tree)
     out = {"versions": src["versions"], "tree": tree}
-    with open("schema.json", "w") as f:
+    with open("schema/schema.json", "w") as f:
         json.dump(out, f, separators=(",", ":"), sort_keys=True)
-    print("schema.json  %.2f MB" % (os.path.getsize("schema.json") / 1048576))
+    print("schema/schema.json  %.2f MB" % (os.path.getsize("schema/schema.json") / 1048576))
 
 
 if __name__ == "__main__":
