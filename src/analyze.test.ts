@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { findDuplicateProperties, findUndeclaredVariables } from "./analyze.js";
+import { findDuplicateProperties, findMalformedPaths, findUndeclaredVariables } from "./analyze.js";
 
 const duplicates = (lines: string[]) =>
   findDuplicateProperties(lines).map((f) => f.message);
@@ -93,6 +93,37 @@ test("scripts stored in a quoted value are left alone", () => {
       '/system scheduler add name=x on-event="{:if ([:len \\$newips] > 0) do={',
       ':log info \\"hi\\";}}"',
     ]),
+    [],
+  );
+});
+
+test("a doubled separator is reported", () => {
+  const found = findMalformedPaths(["/ip // address /add chain=firewall"]);
+  assert.equal(found.length, 1);
+  assert.match(found[0]!.message, /empty path segment/);
+});
+
+test("a slash inside a value is not a path error", () => {
+  assert.deepEqual(findMalformedPaths(["add address=0.0.0.0/8 list=BOGONS"]), []);
+});
+
+test("a normal path is left alone", () => {
+  assert.deepEqual(findMalformedPaths(["/ip firewall filter", "/ip/route/add gateway=1.2.3.4"]), []);
+});
+
+test("an assignment with no property name is reported", () => {
+  const found = findMalformedPaths(["/ip route add =1.2.3.4"]);
+  assert.match(found[0]?.message ?? "", /missing property name/);
+});
+
+test("a doubled equals is reported", () => {
+  const found = findMalformedPaths(["/ip route add gateway==1.2.3.4"]);
+  assert.match(found[0]?.message ?? "", /single '='/);
+});
+
+test("scripts in quoted values are left alone", () => {
+  assert.deepEqual(
+    findMalformedPaths(['add on-event="{:log info \\"a//b\\";}"']),
     [],
   );
 });

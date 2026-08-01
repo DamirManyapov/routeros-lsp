@@ -210,6 +210,90 @@ export function findUndeclaredVariables(lines: string[]): Finding[] {
   return out;
 }
 
+/**
+ * Reports paths that cannot parse at all.
+ *
+ * Only shapes with no legitimate reading are reported — an empty segment or a
+ * doubled separator. Anything merely unusual is left to the schema check,
+ * which knows what actually exists.
+ */
+export function findMalformedPaths(lines: string[]): Finding[] {
+  const out: Finding[] = [];
+  let insideString = false;
+
+  lines.forEach((raw, index) => {
+    const wasInside = insideString;
+    insideString = insideString !== hasOddQuotes(raw);
+    if (wasInside) return;
+
+    const trimmed = raw.trim();
+    if (!trimmed || trimmed.startsWith("#")) return;
+
+    for (const token of tokenize(trimmed)) {
+      if (!token.startsWith("/")) continue;
+      // Values legitimately contain slashes: address=0.0.0.0/8
+      if (token.includes("=")) continue;
+
+      const doubled = token.indexOf("//");
+      if (doubled >= 0) {
+        const column = raw.indexOf(token) + doubled;
+        out.push({
+          line: index,
+          column,
+          length: 2,
+          message: "empty path segment — '//' has nothing between the separators",
+          severity: "error",
+          code: "malformed-path",
+        });
+        continue;
+      }
+
+      // A path made only of separators, or one starting with a non-name.
+      if (/^\/+$/.test(token) || /^\/[^A-Za-z]/.test(token)) {
+        const column = raw.indexOf(token);
+        out.push({
+          line: index,
+          column,
+          length: token.length,
+          message: `'${token}' is not a valid path`,
+          severity: "error",
+          code: "malformed-path",
+        });
+      }
+    }
+
+    // "chain=" with nothing after it, and "key==value".
+    for (const token of tokenize(trimmed)) {
+      if (token.startsWith("=")) {
+        const column = raw.indexOf(token);
+        out.push({
+          line: index,
+          column,
+          length: token.length,
+          message: "missing property name before '='",
+          severity: "error",
+          code: "malformed-property",
+        });
+        continue;
+      }
+      const doubleEquals = token.indexOf("==");
+      if (doubleEquals > 0) {
+        const column = raw.indexOf(token) + doubleEquals;
+        out.push({
+          line: index,
+          column,
+          length: 2,
+          message: "'==' is not an assignment — RouterOS uses a single '='",
+          severity: "error",
+          code: "malformed-property",
+        });
+      }
+    }
+  });
+
+  return out;
+}
+
 /** Names referenced as $name or $"name" within a token. */
 function referencedNames(token: string): string[] {
   const names: string[] = [];
@@ -227,7 +311,7 @@ function stripName(token: string): string {
 }
 
 /** Whether a line leaves a quoted value open, ignoring escaped quotes. */
-function hasOddQuotes(text: string): boolean {
+export function hasOddQuotes(text: string): boolean {
   let count = 0;
   for (let i = 0; i < text.length; i++) {
     if (text[i] === "\\") { i++; continue; }

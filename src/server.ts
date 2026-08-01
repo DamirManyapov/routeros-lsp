@@ -18,7 +18,9 @@ import { dirname, join } from "node:path";
 import { Schema, type Node } from "./schema.js";
 import {
   findDuplicateProperties,
+  findMalformedPaths,
   findUndeclaredVariables,
+  hasOddQuotes,
   type Finding,
 } from "./analyze.js";
 import { Types, checkValue } from "./types.js";
@@ -261,6 +263,7 @@ function diagnose(doc: TextDocument): Diagnostic[] {
     ...findDuplicateProperties(lines),
     ...findUndeclaredVariables(lines),
     ...findBadValues(lines),
+    ...findMalformedPaths(lines),
   ]) {
     out.push(toDiagnostic(finding));
   }
@@ -332,15 +335,6 @@ function findBadValues(lines: string[]): Finding[] {
   });
 
   return out;
-}
-
-function hasOddQuotes(text: string): boolean {
-  let count = 0;
-  for (let i = 0; i < text.length; i++) {
-    if (text[i] === "\\") { i++; continue; }
-    if (text[i] === '"') count++;
-  }
-  return count % 2 === 1;
 }
 
 function toDiagnostic(finding: Finding): Diagnostic {
