@@ -5,6 +5,8 @@ import {
   TextDocumentSyncKind,
   CompletionItemKind,
   DiagnosticSeverity,
+  CodeActionKind,
+  type CodeAction,
   type CompletionItem,
   type Diagnostic,
   type InitializeResult,
@@ -20,6 +22,13 @@ import {
   type Finding,
 } from "./analyze.js";
 import { Types, checkValue } from "./types.js";
+import {
+  fixDuplicateProperty,
+  fixInvalidValue,
+  fixUndeclaredVariable,
+  fixUnknownSegment,
+  type Fix,
+} from "./fixes.js";
 import {
   contextAt,
   joinContinuations,
@@ -46,8 +55,11 @@ connection.onInitialize((): InitializeResult => ({
       resolveProvider: false,
     },
     hoverProvider: true,
+    codeActionProvider: {
+      codeActionKinds: [CodeActionKind.QuickFix],
+    },
   },
-  serverInfo: { name: "routeros-lsp", version: "0.1.0" },
+  serverInfo: { name: "routeros-lsp", version: "0.3.0" },
 }));
 
 function iconFor(kind: Node["kind"]): CompletionItemKind {
@@ -345,6 +357,102 @@ function toDiagnostic(finding: Finding): Diagnostic {
     source: "routeros",
     code: finding.code,
   };
+}
+
+connection.onCodeAction((params): CodeAction[] => {
+  const doc = documents.get(params.textDocument.uri);
+  if (!doc) return [];
+
+  const lines = doc.getText().split(/\r?\n/);
+  const actions: CodeAction[] = [];
+
+  // Only this server's own diagnostics can be fixed; others belong to whoever
+  // reported them.
+  for (const diagnostic of params.context.diagnostics) {
+    if (diagnostic.source !== "routeros") continue;
+
+    const written = textOf(lines, diagnostic);
+    let fixes: Fix[] = [];
+
+    switch (diagnostic.code) {
+      case "unknown-path": {
+        const line = lines[diagnostic.range.start.line] ?? "";
+        const head = tokenize(line.trim())[0] ?? "";
+        const segments = splitPath(head);
+        const at = segments.indexOf(written);
+        const siblings = schema
+          .childrenOf(segments.slice(0, Math.max(0, at)))
+          .filter((child) => child.kind !== "a")
+          .map((child) => child.name);
+        fixes = fixUnknownSegment(params.textDocument.uri, diagnostic, written, siblings);
+        break;
+      }
+
+      case "invalid-value": {
+        const type = typeForDiagnostic(lines, diagnostic);
+        if (type) fixes = fixInvalidValue(diagnostic, written, type);
+        break;
+      }
+
+      case "undeclared-variable": {
+        fixes = fixUndeclaredVariable(diagnostic, written.replace(/^\$/, ""), lines);
+        break;
+      }
+
+      case "duplicate-property": {
+        fixes = fixDuplicateProperty(diagnostic, written, lines);
+        break;
+      }
+    }
+
+    for (const fix of fixes) {
+      actions.push({
+        title: fix.title,
+        kind: CodeActionKind.QuickFix,
+        diagnostics: [diagnostic],
+        isPreferred: fix.preferred,
+        edit: { changes: { [params.textDocument.uri]: fix.edits } },
+      });
+    }
+  }
+
+  return actions;
+});
+
+/** The text a diagnostic covers. */
+function textOf(lines: string[], diagnostic: Diagnostic): string {
+  const line = lines[diagnostic.range.start.line] ?? "";
+  return line.slice(diagnostic.range.start.character, diagnostic.range.end.character);
+}
+
+/** Re-resolves the type behind an invalid-value diagnostic. */
+function typeForDiagnostic(lines: string[], diagnostic: Diagnostic) {
+  const index = diagnostic.range.start.line;
+  const line = lines[index] ?? "";
+
+  // The property name sits just before the value the diagnostic covers.
+  const upToValue = line.slice(0, diagnostic.range.start.character);
+  const property = /([A-Za-z][A-Za-z0-9-]*)=$/.exec(upToValue)?.[1];
+  if (!property) return null;
+
+  const tokens = tokenize(line.trim());
+  const head = tokens[0] ?? "";
+  let path: string[];
+  let command: string;
+
+  if (head.startsWith("/")) {
+    path = splitPath(head);
+    command = tokens.slice(1).find((t) => COMMAND_VERBS.has(t)) ?? "";
+    if (!command && path.length > 1 && COMMAND_VERBS.has(path[path.length - 1]!)) {
+      command = path.pop()!;
+    }
+  } else {
+    path = sectionAt(lines, index - 1);
+    command = tokens.find((t) => COMMAND_VERBS.has(t)) ?? "";
+  }
+  if (!command || path.length === 0) return null;
+
+  return types.get(path, command, property);
 }
 
 documents.onDidChangeContent((change) => {
