@@ -1,6 +1,6 @@
 {
   "name": "@damirmanyapov/routeros-lsp",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "Offline language server for MikroTik RouterOS .rsc files",
   "type": "module",
   "bin": {
@@ -9,7 +9,8 @@
   "files": [
     "dist/**",
     "schema/schema.json",
-    "schema/types.json"
+    "schema/types.json",
+    "test/fixtures/*.rsc"
   ],
   "keywords": [
     "routeros",
@@ -29,7 +30,7 @@
   "scripts": {
     "build": "tsc",
     "watch": "tsc --watch",
-    "test": "node --test dist/*.test.js",
+    "test": "tsc && node --test dist/*.test.js",
     "schema": "python3 schema/build-schema.py && python3 schema/compact.py"
   },
   "dependencies": {

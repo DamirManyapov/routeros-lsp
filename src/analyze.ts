@@ -60,6 +60,9 @@ export function findDuplicateProperties(lines: string[]): Finding[] {
       // Nested groups address different sub-objects; a bare leading dot
       // continues the previous group and is likewise not a repeat.
       if (key.startsWith(".") || key.includes(".")) continue;
+      // Comparison operators end in the same character as an assignment:
+      // "!=", ">=", "<=". A property name is a bare word.
+      if (!/^[a-zA-Z_][a-zA-Z0-9_-]*$/.test(key)) continue;
       if (REPEATABLE.has(key)) continue;
 
       const previous = seen.get(key);
@@ -98,7 +101,7 @@ export function findDuplicateProperties(lines: string[]): Finding[] {
  */
 export function findUndeclaredVariables(lines: string[]): Finding[] {
   const out: Finding[] = [];
-  const globals = new Set<string>();
+  const globals = collectExternals(lines);
   // A stack of scopes; index 0 holds file-level locals.
   const scopes: Set<string>[] = [new Set()];
   // Depth at which the current function body began, if any.
@@ -106,13 +109,17 @@ export function findUndeclaredVariables(lines: string[]): Finding[] {
   // Function names declared on a line that also opens their body; they must
   // survive the closing brace, since the name belongs to the outer scope.
   const pendingDeclarations: string[] = [];
+  // Set when a function body opened and closed on the same line.
+  let inlineBody = false;
 
   const declared = (name: string) =>
     globals.has(name) ||
     scopes.some((scope, depth) => {
       const boundary = functionDepth[functionDepth.length - 1];
-      // Inside a function body, only its own scopes and globals are visible.
-      if (boundary !== undefined && depth < boundary) return false;
+      // Inside a function body only its own scopes and globals are visible.
+      // The body's first scope sits at the boundary index itself, so scopes
+      // strictly below it belong to the caller.
+      if (boundary !== undefined && depth < boundary - 1) return false;
       return scope.has(name);
     });
 
@@ -162,7 +169,17 @@ export function findUndeclaredVariables(lines: string[]): Finding[] {
       // level deeper than the current one.
       if (token.startsWith("do={")) {
         const isFunction = tokens[0] === ":local" || tokens[0] === ":global";
-        if (isFunction) functionDepth.push(scopes.length + 1);
+        if (isFunction) {
+          functionDepth.push(scopes.length + 1);
+          // A body written on one line closes before the brace count runs at
+          // end of line, so its scope is opened here instead — otherwise its
+          // own declarations would land in the caller's, which the boundary
+          // then hides from it.
+          if (countBraces(trimmed, "}") >= countBraces(trimmed, "{")) {
+            scopes.push(new Set());
+            inlineBody = true;
+          }
+        }
       }
 
       // Scripts stored as string values — "on-event=\"...\"", /system/script
@@ -187,6 +204,12 @@ export function findUndeclaredVariables(lines: string[]): Finding[] {
           code: "undeclared-variable",
         });
       }
+    }
+
+    if (inlineBody) {
+      scopes.pop();
+      functionDepth.pop();
+      inlineBody = false;
     }
 
     // Brace depth drives scope push/pop. Braces inside strings do not count.
@@ -264,6 +287,9 @@ export function findMalformedPaths(lines: string[]): Finding[] {
 
     // "chain=" with nothing after it, and "key==value".
     for (const token of tokenize(trimmed)) {
+      // A lone "=" surrounded by spaces is comparison, not assignment:
+      // ":if ($action = \"apply\")". Assignment never has space around it.
+      if (token === "=") continue;
       if (token.startsWith("=")) {
         const column = raw.indexOf(token);
         out.push({
@@ -293,6 +319,63 @@ export function findMalformedPaths(lines: string[]): Finding[] {
 
   return out;
 }
+
+/**
+ * Names a script may rely on without declaring them.
+ *
+ * RouterOS injects variables into a script at run time — its own factory
+ * configuration reads `$defconfPassword` and `$keepUsers`, neither declared
+ * anywhere. A name assigned with `:set` is treated the same way: the intent is
+ * clearly a variable that exists, whatever this file says about it.
+ */
+function collectExternals(lines: string[]): Set<string> {
+  const names = new Set<string>();
+
+  for (const raw of lines) {
+    const trimmed = raw.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+
+    const tokens = tokenize(trimmed);
+    for (let i = 0; i < tokens.length; i++) {
+      // ":set name value" assigns whatever the name refers to, wherever it
+      // came from, so the name exists.
+      if (tokens[i] === ":set") {
+        const target = stripName(tokens[i + 1] ?? "");
+        if (target) names.add(target);
+      }
+    }
+
+    // A name passed to a configuration command is one the system supplies:
+    // "/user set admin password=$defconfPassword" only makes sense if
+    // something outside the file set it. RouterOS does exactly this to its own
+    // factory configuration. Recognising it here means the guard that reads
+    // the same name a few lines up is not reported either.
+    for (const name of referencedNames(raw)) {
+      if (isConfigurationUse(raw, name)) names.add(name);
+    }
+
+  }
+
+  return names;
+}
+
+
+/**
+ * Whether a reference is a configuration command consuming a supplied value.
+ *
+ * RouterOS injects variables into a device's configuration script before it
+ * runs — the factory config passes `$defconfPassword` straight into
+ * `/user set admin password=...` without declaring it anywhere. A reference
+ * that reaches a variable through a property assignment is of that kind.
+ *
+ * A reference in a scripting construct — `:if ($x > 0)`, `:put $x` — is the
+ * author's own, and a missing declaration there is worth reporting.
+ */
+function isConfigurationUse(line: string, name: string): boolean {
+  // Property names may be dotted: "security.passphrase=$defconfWifiPassword".
+  return new RegExp(`[a-z0-9.-]+=\\$\\{?"?${name}\\b`, "i").test(line);
+}
+
 
 /** Names referenced as $name or $"name" within a token. */
 function referencedNames(token: string): string[] {
