@@ -42,7 +42,10 @@ import {
 
 const here = dirname(fileURLToPath(import.meta.url));
 const schema = new Schema(join(here, "..", "schema", "schema.json"));
-const types = new Types(join(here, "..", "schema", "types.json"));
+const types = new Types(
+  join(here, "..", "schema", "types.json"),
+  join(here, "..", "schema", "choices.json"),
+);
 
 const connection = createConnection(ProposedFeatures.all);
 const documents = new TextDocuments(TextDocument);

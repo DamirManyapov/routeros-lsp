@@ -4,3 +4,4 @@ schema/cache/
 *.log
 schema/cache/
 schema/routeros-schema.json
+schema/cache-deep/

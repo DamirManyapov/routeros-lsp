@@ -36,12 +36,16 @@ jobs:
       - name: Cache upstream schemas
         uses: actions/cache@v4
         with:
-          path: schema/cache
+          path: |
+            schema/cache
+            schema/cache-deep
           key: restraml-${{ github.run_id }}
           restore-keys: restraml-
 
       - name: Keep the current schema for comparison
-        run: cp schema/schema.json /tmp/schema-before.json
+        run: |
+          cp schema/schema.json /tmp/schema-before.json
+          cp schema/choices.json /tmp/choices-before.json
 
       - name: Rebuild from upstream
         run: npm run schema
@@ -49,7 +53,8 @@ jobs:
       - name: Stop if nothing changed
         id: changed
         run: |
-          if cmp -s /tmp/schema-before.json schema/schema.json; then
+          if cmp -s /tmp/schema-before.json schema/schema.json \
+             && cmp -s /tmp/choices-before.json schema/choices.json; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             echo "Schema is unchanged; nothing to do."
           else
@@ -83,5 +88,7 @@ jobs:
           commit-message: "update command schema from upstream"
           title: "Update command schema"
           body: ${{ steps.describe.outputs.body }}
-          add-paths: schema/schema.json
+          add-paths: |
+            schema/schema.json
+            schema/choices.json
           delete-branch: true

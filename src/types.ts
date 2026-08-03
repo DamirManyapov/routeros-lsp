@@ -18,20 +18,46 @@ export interface ValueType {
 
 export class Types {
   private readonly table: Record<string, ValueType>;
+  /** Accepted values per parameter, from upstream completion data. */
+  private readonly choices: Record<string, string[]>;
 
-  constructor(path: string) {
-    this.table = existsSync(path)
-      ? (JSON.parse(readFileSync(path, "utf8")) as Record<string, ValueType>)
+  constructor(typesPath: string, choicesPath?: string) {
+    this.table = existsSync(typesPath)
+      ? (JSON.parse(readFileSync(typesPath, "utf8")) as Record<string, ValueType>)
       : {};
+    this.choices =
+      choicesPath && existsSync(choicesPath)
+        ? (JSON.parse(readFileSync(choicesPath, "utf8")) as Record<string, string[]>)
+        : {};
   }
 
+  /**
+   * The two sources answer different questions and are merged here rather than
+   * at build time, so either can be regenerated alone: ranges come from a
+   * device, accepted values from upstream, and a parameter may have both.
+   */
   get(path: string[], command: string, property: string): ValueType | null {
     const key = `${[...path, command].join("/")}|${property}`;
-    return this.table[key] ?? null;
+    const harvested = this.table[key];
+    const accepted = this.choices[key];
+
+    if (!harvested && !accepted) return null;
+    if (!accepted) return harvested ?? null;
+
+    if (!harvested) {
+      return { spec: accepted.join(" | "), literals: accepted };
+    }
+
+    // A harvested literal list is what one device offered; upstream saw every
+    // release, so the union is the safer set to accept.
+    return {
+      ...harvested,
+      literals: [...new Set([...(harvested.literals ?? []), ...accepted])],
+    };
   }
 
   get size(): number {
-    return Object.keys(this.table).length;
+    return new Set([...Object.keys(this.table), ...Object.keys(this.choices)]).size;
   }
 }
 
@@ -55,6 +81,15 @@ export function checkValue(type: ValueType, raw: string): string | null {
   if (/[,;]/.test(value)) return null;
 
   if (type.literals?.includes(value)) return null;
+
+  // A parameter with a known set of values and no other form — no range, no
+  // free string — accepts nothing outside that set. Where a type is also
+  // known, the switch below decides, since "auto | Num" takes both.
+  if (type.literals?.length && !type.kind) {
+    const shown = type.literals.slice(0, 6).map((l) => `'${l}'`).join(", ");
+    const more = type.literals.length > 6 ? `, … (${type.literals.length} total)` : "";
+    return `invalid value '${value}' — expected one of ${shown}${more}`;
+  }
 
   switch (type.kind) {
     case "integer": {
