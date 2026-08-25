@@ -24,6 +24,7 @@ import {
   type Finding,
 } from "./analyze.js";
 import { Types, checkValue } from "./types.js";
+import { semanticTokens, TOKEN_TYPES, TOKEN_MODIFIERS } from "./tokens.js";
 import {
   fixDuplicateProperty,
   fixInvalidValue,
@@ -63,8 +64,18 @@ connection.onInitialize((): InitializeResult => ({
     codeActionProvider: {
       codeActionKinds: [CodeActionKind.QuickFix],
     },
+    // Colour by meaning: whether a variable was declared, whether it is a
+    // loop counter, whether it is a function. tree-sitter cannot know any of
+    // that from shape alone.
+    semanticTokensProvider: {
+      legend: {
+        tokenTypes: [...TOKEN_TYPES],
+        tokenModifiers: [...TOKEN_MODIFIERS],
+      },
+      full: true,
+    },
   },
-  serverInfo: { name: "routeros-lsp", version: "0.3.0" },
+  serverInfo: { name: "routeros-lsp", version: "0.8.0" },
 }));
 
 function iconFor(kind: Node["kind"]): CompletionItemKind {
@@ -468,6 +479,12 @@ function typeForDiagnostic(lines: string[], diagnostic: Diagnostic) {
  */
 const DEBOUNCE_MS = 250;
 const scheduled = new Map<string, NodeJS.Timeout>();
+
+connection.languages.semanticTokens.on((params) => {
+  const doc = documents.get(params.textDocument.uri);
+  if (!doc) return { data: [] };
+  return { data: semanticTokens(doc.getText().split(/\r?\n/)) };
+});
 
 documents.onDidChangeContent((change) => {
   const uri = change.document.uri;
